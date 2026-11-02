@@ -1,4 +1,7 @@
-# Azure AKS with Terraform (basic)
+# azure-aks-terraform
+
+Basic Azure setup with Terraform: remote state, resource group, VNet/subnet and an AKS cluster.
+Built as a learning project to practise Terraform on Azure.
 
 Two stacks:
 - `bootstrap/`: storage account for remote state (local state, run once)
@@ -28,3 +31,17 @@ Note the outputs (`storage_account_name` etc).
 ## 3. Tear down (AKS bills while running)
     cd infra && terraform destroy -var subscription_id=<SUB_ID>
     # Remote state is cheap; destroy bootstrap/ only when you are fully done.
+
+## Configuration
+Copy `terraform.tfvars.example` to `terraform.tfvars` in each stack and set `subscription_id`
+(or pass it with `-var`). `*.tfvars` and `backend.hcl` are git-ignored.
+
+## CI
+`.github/workflows/validate.yml` runs `terraform fmt -check`, `init -backend=false` and
+`validate` on both stacks. It needs no Azure credentials.
+
+## Planned next steps
+- Split networking and AKS into modules
+- Separate dev/test environments with their own state keys
+- Run `plan`/`apply` from a pipeline with OIDC auth instead of local runs
+- Install ArgoCD on the cluster via Helm

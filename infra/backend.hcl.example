@@ -1,6 +1,0 @@
-# Copy to backend.hcl and fill in with the bootstrap outputs.
-resource_group_name  = "rg-tfdemo-tfstate"
-storage_account_name = "<storage_account_name from bootstrap>"
-container_name       = "tfstate"
-key                  = "aks-dev.tfstate"
-use_azuread_auth     = true
