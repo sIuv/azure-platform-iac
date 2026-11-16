@@ -1,0 +1,117 @@
+# Bygger eller river infra/ (AKS-klustret) manuellt från fliken Actions.
+#
+# Tänkt för labb: vid "apply" kan infrastrukturen rivas automatiskt efter en
+# timer, så att den inte står kvar och kostar pengar om man glömmer bort den.
+#
+# Förutsättningar i Azure (skapas inte av den här workflowen):
+#   - En app-registrering eller managed identity med en federated credential
+#     som litar på det här repot (OIDC, så att inga lösenord lagras i GitHub).
+#   - Identiteten har rollen Contributor på subscriptionen och rollen
+#     Storage Blob Data Contributor på lagringskontot för state.
+#
+# Förutsättningar i GitHub (Settings → Secrets and variables → Actions):
+#   Secrets:   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
+#   Variables: TFSTATE_STORAGE_ACCOUNT (namnet som bootstrap skriver ut)
+
+name: Terraform Infra
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Vad ska göras?"
+        required: true
+        default: "apply"
+        type: choice
+        options:
+          - apply
+          - destroy
+      auto_destroy_minutes:
+        description: "Minuter innan automatisk destroy (0 = ingen timer)"
+        required: true
+        default: "30"
+        type: choice
+        options:
+          - "15"
+          - "30"
+          - "60"
+          - "0"
+
+permissions:
+  id-token: write # krävs för att GitHub ska kunna utfärda en OIDC-token till Azure
+  contents: read
+
+# Två körningar samtidigt mot samma state skulle krocka på state-låset.
+# Den nya körningen får vänta i stället för att avbryta en pågående destroy.
+concurrency:
+  group: terraform-infra
+  cancel-in-progress: false
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    # Marginal över den längsta timern (60 min) plus tid för apply och destroy,
+    # som för AKS kan ta 10–15 minuter vardera.
+    timeout-minutes: 100
+    defaults:
+      run:
+        working-directory: ./infra
+    env:
+      # azurerm-providern läser de här direkt och loggar in via OIDC.
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      ARM_USE_OIDC: true
+      # Variabeln subscription_id i infra/variables.tf saknar default.
+      TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      # backend.hcl checkas inte in, så samma värden skickas in här i stället.
+      # Se infra/backend.hcl.example.
+      - name: Terraform Init
+        run: >
+          terraform init
+          -backend-config="resource_group_name=rg-tfdemo-tfstate"
+          -backend-config="storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}"
+          -backend-config="container_name=tfstate"
+          -backend-config="key=aks-dev.tfstate"
+          -backend-config="use_azuread_auth=true"
+          -backend-config="use_oidc=true"
+
+      - name: Terraform Plan
+        if: inputs.action == 'apply'
+        run: terraform plan -out=tfplan
+
+      # Applicerar exakt den plan som skrevs ut i steget ovan.
+      - name: Terraform Apply
+        if: inputs.action == 'apply'
+        run: terraform apply -auto-approve tfplan
+
+      - name: Terraform Output
+        if: inputs.action == 'apply'
+        run: terraform output
+
+      - name: Wait Before Auto Destroy
+        if: inputs.action == 'apply' && inputs.auto_destroy_minutes != '0'
+        env:
+          WAIT_MINUTES: ${{ inputs.auto_destroy_minutes }}
+        run: |
+          echo "Infrastrukturen är uppe. Rivs automatiskt om $WAIT_MINUTES minuter."
+          echo "Avbryt körningen i Actions för att riva direkt."
+          sleep $(( WAIT_MINUTES * 60 ))
+
+      # always() gör att destroy körs även om apply misslyckades halvvägs eller
+      # om körningen avbröts under väntan. Annars kan resurser bli kvar och kosta.
+      - name: Terraform Destroy (Auto)
+        if: always() && inputs.action == 'apply' && inputs.auto_destroy_minutes != '0'
+        run: terraform destroy -auto-approve
+
+      - name: Terraform Destroy (Manual)
+        if: inputs.action == 'destroy'
+        run: terraform destroy -auto-approve
