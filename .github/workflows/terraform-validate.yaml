@@ -1,0 +1,41 @@
+# Kontrollerar att Terraform-koden är formaterad och giltig vid varje push och PR.
+#
+# Körs utan backend och utan inloggning mot Azure, så den bygger ingenting och
+# behöver inga secrets. Därför kan den även köras på bootstrap/, som annars
+# bara körs manuellt.
+
+name: Terraform Validate
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        dir: [bootstrap, infra]
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Fmt
+        run: terraform fmt -check -recursive
+
+      # -backend=false: validate behöver inte state, och slipper då logga in.
+      - name: Terraform Init
+        run: terraform init -backend=false
+
+      - name: Terraform Validate
+        run: terraform validate
