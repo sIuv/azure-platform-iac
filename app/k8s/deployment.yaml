@@ -30,7 +30,7 @@ spec:
           ports:
             - name: http
               containerPort: 8080
-          # Små värden, eftersom klustret bara har en liten nod (Standard_B2s).
+          # Små värden, eftersom klustret bara har en liten nod (Standard_B2als_v2, 4 GiB).
           resources:
             requests:
               cpu: 50m

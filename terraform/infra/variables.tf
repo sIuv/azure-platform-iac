@@ -29,9 +29,12 @@ variable "node_count" {
   default = 1
 }
 
+# Standard_B2als_v2 (2 vCPU, 4 GiB) är den billigaste storleken som uppfyller
+# AKS minimikrav för systemnoder (2 vCPU, 4 GiB). Gamla Standard_B2s är inte
+# tillåten i alla subscriptions i swedencentral.
 variable "node_vm_size" {
   type        = string
-  default     = "Standard_B2s"
+  default     = "Standard_B2als_v2"
   description = "Cheap dev size. Check availability/quota in your region."
 }
 
