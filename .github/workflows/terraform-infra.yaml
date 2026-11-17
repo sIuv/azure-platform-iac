@@ -230,7 +230,12 @@ jobs:
 
       - name: Terraform Destroy (Auto)
         if: always()
-        run: terraform destroy -auto-approve
+        uses: ./.github/actions/terraform-destroy
+        with:
+          working-directory: ${{ env.TERRAFORM_DIR }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
   manual-destroy:
     if: inputs.action == 'destroy'
@@ -251,4 +256,9 @@ jobs:
           storage-account: ${{ vars.TFSTATE_STORAGE_ACCOUNT }}
 
       - name: Terraform Destroy (Manual)
-        run: terraform destroy -auto-approve
+        uses: ./.github/actions/terraform-destroy
+        with:
+          working-directory: ${{ env.TERRAFORM_DIR }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}

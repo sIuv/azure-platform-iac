@@ -1,0 +1,74 @@
+# River infrastrukturen med terraform destroy, med en reserv om det misslyckas.
+#
+# Varför en reserv behövs: om AKS misslyckas halvvägs (t.ex. "AllocationFailed")
+# hinner Azure skapa klustret, men Terraform sparar det inte i sin state.
+# terraform destroy vet då inte om klustret och fastnar på att subnätet
+# används. Reserven tar bort hela resursgruppen med az, vilket tar med allt i
+# den, även sådant som Terraform inte känner till.
+#
+# Kräver att terraform init redan är körd i working-directory.
+
+name: Terraform Destroy
+description: terraform destroy, och ta bort resursgruppen med az om det misslyckas
+
+inputs:
+  working-directory:
+    description: Mappen med Terraform-koden
+    required: true
+  client-id:
+    description: Pipelinens identitet i Azure (för reservsteget)
+    required: true
+  tenant-id:
+    description: Entra ID-tenant (för reservsteget)
+    required: true
+  subscription-id:
+    description: Azure-subscription (för reservsteget)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # Resursgruppens namn läses från state innan destroy, eftersom outputs
+    # försvinner när destroy har gått igenom. Saknas den i state skapades
+    # aldrig något, och då finns inget att riva.
+    - name: Terraform Destroy
+      id: destroy
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        resource_group=$(terraform output -raw resource_group_name 2>/dev/null || true)
+        echo "resource-group=$resource_group" >> "$GITHUB_OUTPUT"
+
+        if terraform destroy -auto-approve; then
+          echo "result=ok" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo "result=failed" >> "$GITHUB_OUTPUT"
+        echo "terraform destroy misslyckades. Tar bort hela resursgruppen i stället."
+
+    # Loggar in först här, och bara när det behövs. Inloggningen gäller i
+    # ungefär en timme, och auto-destroy kan ha väntat lika länge innan detta.
+    - name: Azure Login
+      if: steps.destroy.outputs.result == 'failed'
+      uses: azure/login@v3
+      with:
+        client-id: ${{ inputs.client-id }}
+        tenant-id: ${{ inputs.tenant-id }}
+        subscription-id: ${{ inputs.subscription-id }}
+
+    - name: Delete Resource Group
+      if: steps.destroy.outputs.result == 'failed'
+      shell: bash
+      env:
+        RESOURCE_GROUP: ${{ steps.destroy.outputs.resource-group }}
+      run: |
+        if [[ -z "$RESOURCE_GROUP" ]]; then
+          echo "FEL: hittade ingen resursgrupp i state, så reserven vet inte vad den ska ta bort." >&2
+          echo "Kontrollera i Azure-portalen vad som finns kvar och ta bort det för hand." >&2
+          exit 1
+        fi
+
+        # Tar även bort AKS egen nodgrupp (MC_...), eftersom den hör till klustret.
+        az group delete --name "$RESOURCE_GROUP" --yes
+        echo "OK: $RESOURCE_GROUP och allt i den är borttaget."
