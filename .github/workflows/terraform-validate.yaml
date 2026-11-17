@@ -1,7 +1,7 @@
 # Kontrollerar att Terraform-koden är formaterad och giltig vid varje push och PR.
 #
 # Körs utan backend och utan inloggning mot Azure, så den bygger ingenting och
-# behöver inga secrets. Därför kan den även köras på bootstrap/, som annars
+# behöver inga secrets. Därför kan den även köras på terraform/bootstrap/, som annars
 # bara körs manuellt.
 
 name: Terraform Validate
@@ -18,7 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        dir: [bootstrap, infra]
+        dir: [terraform/bootstrap, terraform/infra]
     defaults:
       run:
         working-directory: ${{ matrix.dir }}

@@ -1,0 +1,40 @@
+# Installerar Terraform och kör terraform init mot state i Azure.
+#
+# Används av flera jobb i Terraform Infra, så att backend-inställningarna
+# bara finns på ett ställe. Inloggningen mot Azure sker via miljövariablerna
+# ARM_* som sätts i workflowen.
+
+name: Terraform Init
+description: Installera Terraform och kör init mot state i Azure Storage
+
+inputs:
+  working-directory:
+    description: Mappen med Terraform-koden
+    required: true
+  storage-account:
+    description: Lagringskontot som bootstrap skapade
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        # Utan wrapper blir utskriften från terraform output -raw ren,
+        # så att den kan sparas som output från jobbet.
+        terraform_wrapper: false
+
+    # backend.hcl checkas inte in, så samma värden skickas in här i stället.
+    # Se terraform/infra/backend.hcl.example.
+    - name: Terraform Init
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: >
+        terraform init
+        -backend-config="resource_group_name=rg-tfdemo-tfstate"
+        -backend-config="storage_account_name=${{ inputs.storage-account }}"
+        -backend-config="container_name=tfstate"
+        -backend-config="key=aks-dev.tfstate"
+        -backend-config="use_azuread_auth=true"
+        -backend-config="use_oidc=true"

@@ -1,17 +1,27 @@
-# Bygger eller river infra/ (AKS-klustret) manuellt från fliken Actions.
+# Bygger eller river terraform/infra/ (AKS-klustret) manuellt från fliken Actions.
+# Vid "apply" deployas även appen i app/ till klustret och testas.
 #
-# Tänkt för labb: vid "apply" kan infrastrukturen rivas automatiskt efter en
-# timer, så att den inte står kvar och kostar pengar om man glömmer bort den.
+# Tänkt för labb: vid "apply" kan allt rivas automatiskt efter en timer, så att
+# det inte står kvar och kostar pengar om man glömmer bort det.
+#
+# Ordning vid apply:
+#
+#   terraform-apply ─┐
+#                    ├─► app-deploy ─► auto-destroy (väntar, river sedan)
+#   app-build ───────┘
 #
 # Förutsättningar i Azure (skapas inte av den här workflowen):
-#   - En app-registrering eller managed identity med en federated credential
-#     som litar på det här repot (OIDC, så att inga lösenord lagras i GitHub).
+#   - En identitet med en federated credential som litar på det här repot
+#     (OIDC, så att inga lösenord lagras i GitHub).
 #   - Identiteten har rollen Contributor på subscriptionen och rollen
 #     Storage Blob Data Contributor på lagringskontot för state.
 #
 # Förutsättningar i GitHub (Settings → Secrets and variables → Actions):
 #   Secrets:   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID
 #   Variables: TFSTATE_STORAGE_ACCOUNT (namnet som bootstrap skriver ut)
+#
+# Appens image hamnar i GitHub Container Registry (ghcr.io). Paketet måste
+# vara publikt, annars får AKS inte hämta det.
 
 name: Terraform Infra
 
@@ -47,71 +57,190 @@ concurrency:
   group: terraform-infra
   cancel-in-progress: false
 
+env:
+  # azurerm-providern läser de här direkt och loggar in via OIDC.
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  ARM_USE_OIDC: true
+  # Variabeln subscription_id i terraform/infra/variables.tf saknar default.
+  TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  TERRAFORM_DIR: ./terraform/infra
+
 jobs:
-  terraform:
+  terraform-apply:
+    if: inputs.action == 'apply'
     runs-on: ubuntu-latest
-    # Marginal över den längsta timern (60 min) plus tid för apply och destroy,
-    # som för AKS kan ta 10–15 minuter vardera.
-    timeout-minutes: 100
+    # Att skapa AKS tar ofta 10–15 minuter.
+    timeout-minutes: 30
+    outputs:
+      resource-group: ${{ steps.outputs.outputs.resource-group }}
+      aks-name: ${{ steps.outputs.outputs.aks-name }}
     defaults:
       run:
-        working-directory: ./infra
-    env:
-      # azurerm-providern läser de här direkt och loggar in via OIDC.
-      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-      ARM_USE_OIDC: true
-      # Variabeln subscription_id i infra/variables.tf saknar default.
-      TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        working-directory: ${{ env.TERRAFORM_DIR }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-
-      # backend.hcl checkas inte in, så samma värden skickas in här i stället.
-      # Se infra/backend.hcl.example.
       - name: Terraform Init
-        run: >
-          terraform init
-          -backend-config="resource_group_name=rg-tfdemo-tfstate"
-          -backend-config="storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}"
-          -backend-config="container_name=tfstate"
-          -backend-config="key=aks-dev.tfstate"
-          -backend-config="use_azuread_auth=true"
-          -backend-config="use_oidc=true"
+        uses: ./.github/actions/terraform-init
+        with:
+          working-directory: ${{ env.TERRAFORM_DIR }}
+          storage-account: ${{ vars.TFSTATE_STORAGE_ACCOUNT }}
 
       - name: Terraform Plan
-        if: inputs.action == 'apply'
         run: terraform plan -out=tfplan
 
       # Applicerar exakt den plan som skrevs ut i steget ovan.
       - name: Terraform Apply
-        if: inputs.action == 'apply'
         run: terraform apply -auto-approve tfplan
 
+      # Sparar klustrets namn så att app-deploy vet vart den ska deploya.
       - name: Terraform Output
-        if: inputs.action == 'apply'
-        run: terraform output
+        id: outputs
+        run: |
+          terraform output
+          echo "resource-group=$(terraform output -raw resource_group_name)" >> "$GITHUB_OUTPUT"
+          echo "aks-name=$(terraform output -raw aks_name)" >> "$GITHUB_OUTPUT"
 
+  # Körs samtidigt som terraform-apply, eftersom de inte är beroende av varandra.
+  app-build:
+    if: inputs.action == 'apply'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write # för att få pusha imagen till ghcr.io
+    outputs:
+      image: ${{ steps.image.outputs.name }}
+    defaults:
+      run:
+        working-directory: ./app
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # setup-uv installerar uv. Python-versionen läses från app/.python-version
+      # och hämtas av uv själv, så setup-python behövs inte.
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+
+      # --locked: misslyckas om uv.lock inte stämmer med pyproject.toml.
+      - name: App Test
+        run: uv run --locked pytest
+
+      # Taggen är commit-id:t, så att man alltid vet exakt vilken kod som körs.
+      # ghcr.io kräver små bokstäver, därav ${GITHUB_REPOSITORY,,}.
+      - name: Image Name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}/hello-app:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Login To GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: App Build
+        run: docker build --tag "${{ steps.image.outputs.name }}" .
+
+      - name: App Push
+        run: docker push "${{ steps.image.outputs.name }}"
+
+  app-deploy:
+    needs: [terraform-apply, app-build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: ./app/k8s
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: AKS Credentials
+        run: >
+          az aks get-credentials
+          --resource-group "${{ needs.terraform-apply.outputs.resource-group }}"
+          --name "${{ needs.terraform-apply.outputs.aks-name }}"
+
+      # Pekar ut imagen som app-build just pushade. Ändringen görs bara i
+      # runnerns kopia av repot och committas inte.
+      - name: Set Image
+        run: kustomize edit set image "hello-app=${{ needs.app-build.outputs.image }}"
+
+      - name: App Deploy
+        run: kubectl apply -k .
+
+      # Väntar tills alla poddar är uppe, så att testet inte körs för tidigt.
+      - name: Wait For Rollout
+        run: kubectl rollout status deployment/hello-app --namespace hello-app --timeout=5m
+
+      - name: App Smoke Test
+        run: ./smoke-test.sh
+
+  auto-destroy:
+    needs: [terraform-apply, app-build, app-deploy]
+    # always() gör att jobbet körs även om något jobb före misslyckades eller
+    # om körningen avbröts. Annars kan resurser bli kvar och kosta.
+    if: always() && inputs.action == 'apply' && inputs.auto_destroy_minutes != '0'
+    runs-on: ubuntu-latest
+    # Marginal över den längsta timern (60 min) plus tid för destroy.
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: ${{ env.TERRAFORM_DIR }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        uses: ./.github/actions/terraform-init
+        with:
+          working-directory: ${{ env.TERRAFORM_DIR }}
+          storage-account: ${{ vars.TFSTATE_STORAGE_ACCOUNT }}
+
+      # Väntar bara om allt gick bra. Gick något fel finns inget att använda,
+      # och då rivs allt direkt.
       - name: Wait Before Auto Destroy
-        if: inputs.action == 'apply' && inputs.auto_destroy_minutes != '0'
+        if: needs.app-deploy.result == 'success'
         env:
           WAIT_MINUTES: ${{ inputs.auto_destroy_minutes }}
         run: |
-          echo "Infrastrukturen är uppe. Rivs automatiskt om $WAIT_MINUTES minuter."
+          echo "Klustret och appen är uppe. Allt rivs automatiskt om $WAIT_MINUTES minuter."
           echo "Avbryt körningen i Actions för att riva direkt."
           sleep $(( WAIT_MINUTES * 60 ))
 
-      # always() gör att destroy körs även om apply misslyckades halvvägs eller
-      # om körningen avbröts under väntan. Annars kan resurser bli kvar och kosta.
       - name: Terraform Destroy (Auto)
-        if: always() && inputs.action == 'apply' && inputs.auto_destroy_minutes != '0'
+        if: always()
         run: terraform destroy -auto-approve
 
+  manual-destroy:
+    if: inputs.action == 'destroy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ${{ env.TERRAFORM_DIR }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Terraform Init
+        uses: ./.github/actions/terraform-init
+        with:
+          working-directory: ${{ env.TERRAFORM_DIR }}
+          storage-account: ${{ vars.TFSTATE_STORAGE_ACCOUNT }}
+
       - name: Terraform Destroy (Manual)
-        if: inputs.action == 'destroy'
         run: terraform destroy -auto-approve
