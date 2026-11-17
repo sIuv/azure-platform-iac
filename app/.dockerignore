@@ -1,0 +1,6 @@
+# Testerna och lokala filer behövs inte i imagen.
+tests/
+.pytest_cache/
+__pycache__/
+.venv/
+k8s/

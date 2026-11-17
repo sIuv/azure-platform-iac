@@ -1,0 +1,5 @@
+subscription_id = "00000000-0000-0000-0000-000000000000"
+# location      = "swedencentral"
+# prefix        = "demo"
+# node_count    = 1
+# node_vm_size  = "Standard_B2s"

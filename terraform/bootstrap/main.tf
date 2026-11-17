@@ -18,6 +18,13 @@ terraform {
 provider "azurerm" {
   features {}
   subscription_id = var.subscription_id
+
+  # Registrera bara de Azure-tjänster som bootstrap använder. Annars registrerar
+  # providern ett tjugotal tjänster, vilket kan ta många minuter första gången.
+  resource_provider_registrations = "none"
+  resource_providers_to_register = [
+    "Microsoft.Storage", # lagringskontot för state
+  ]
 }
 
 variable "subscription_id" {
