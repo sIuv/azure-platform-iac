@@ -29,12 +29,14 @@ variable "node_count" {
   default = 1
 }
 
-# Standard_B2als_v2 (2 vCPU, 4 GiB) är den billigaste storleken som uppfyller
-# AKS minimikrav för systemnoder (2 vCPU, 4 GiB). Gamla Standard_B2s är inte
-# tillåten i alla subscriptions i swedencentral.
+# Standard_D2ls_v5 (2 vCPU, 4 GiB) uppfyller AKS minimikrav för systemnoder
+# (2 vCPU, 4 GiB). Billigare B-serien fungerade inte i swedencentral:
+# Standard_B2s är inte tillåten i alla subscriptions, och Standard_B2als_v2
+# gav "AllocationFailed" (Azure saknade ledig kapacitet). D-serien har oftast
+# mer ledig kapacitet, och Azure föreslog själv den här storleken.
 variable "node_vm_size" {
   type        = string
-  default     = "Standard_B2als_v2"
+  default     = "Standard_D2ls_v5"
   description = "Cheap dev size. Check availability/quota in your region."
 }
 
