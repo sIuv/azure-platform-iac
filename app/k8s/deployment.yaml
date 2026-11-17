@@ -1,9 +1,14 @@
-# Kör appen i Kubernetes. Imagens fullständiga namn och tagg sätts av
-# kustomization.yaml, så här räcker det korta namnet hello-app.
+# Kör appen i Kubernetes.
+#
+# ${IMAGE} byts ut mot imagens fullständiga namn när filen deployas,
+# eftersom taggen är en commit som ändras. Deploy för hand:
+#   IMAGE=ghcr.io/siuv/azure-platform-iac/hello-app:<commit>
+#   sed "s|\${IMAGE}|$IMAGE|" deployment.yaml | kubectl apply -f -
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: hello-app
+  namespace: hello-app
   labels:
     app: hello-app
 spec:
@@ -21,7 +26,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: hello-app
-          image: hello-app
+          image: ${IMAGE}
           ports:
             - name: http
               containerPort: 8080

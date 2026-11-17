@@ -170,13 +170,17 @@ jobs:
           --resource-group "${{ needs.terraform-apply.outputs.resource-group }}"
           --name "${{ needs.terraform-apply.outputs.aks-name }}"
 
-      # Pekar ut imagen som check-image kontrollerade. Ändringen görs bara i
-      # runnerns kopia av repot och committas inte.
-      - name: Set Image
-        run: kustomize edit set image "hello-app=${{ needs.check-image.outputs.image }}"
-
+      # Namespacet skapas först, eftersom de andra filerna lägger sig i det.
+      # sed byter ut ${IMAGE} i deployment.yaml mot imagen som check-image
+      # kontrollerade. sed i stället för envsubst, eftersom sed garanterat
+      # finns på runnern.
       - name: App Deploy
-        run: kubectl apply -k .
+        env:
+          IMAGE: ${{ needs.check-image.outputs.image }}
+        run: |
+          kubectl apply -f namespace.yaml
+          kubectl apply -f service.yaml
+          sed "s|\${IMAGE}|$IMAGE|" deployment.yaml | kubectl apply -f -
 
       # Väntar tills alla poddar är uppe, så att testet inte körs för tidigt.
       - name: Wait For Rollout
