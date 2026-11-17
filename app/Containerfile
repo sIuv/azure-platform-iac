@@ -1,5 +1,5 @@
-# Image för hello_app. Byggs och pushas till GitHub Container Registry av
-# workflowen Terraform Infra.
+# OCI-image för hello_app. Byggs med buildah och pushas till GitHub Container
+# Registry av workflowen App Build.
 
 FROM python:3.12-slim
 

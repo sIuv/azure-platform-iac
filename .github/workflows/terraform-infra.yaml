@@ -90,13 +90,15 @@ jobs:
         id: image
         uses: ./.github/actions/app-image
 
-      # Ingen docker login, med flit: det är så AKS hämtar imagen, så går det
-      # här går det även där.
+      # skopeo läser imagen direkt från registryt utan att hämta den.
+      # Ingen inloggning, med flit: det är så AKS hämtar imagen, så går det
+      # här går det även där. "docker://" är namnet på registry-protokollet,
+      # det betyder inte att Docker används.
       - name: Check Image Is Pullable
         env:
           IMAGE: ${{ steps.image.outputs.name }}
         run: |
-          if docker manifest inspect "$IMAGE" > /dev/null; then
+          if skopeo inspect --raw "docker://$IMAGE" > /dev/null; then
             echo "OK: $IMAGE finns och är publik."
             exit 0
           fi

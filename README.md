@@ -121,9 +121,10 @@ time. To add a dependency, use `uv add <package>` instead of editing
 - **Terraform Validate** runs on every push. It checks that the code is
   formatted and valid. It doesn't log in to Azure or build anything.
 - **App Build** runs whenever something in `app/` changes. It runs the tests
-  and builds the container image. On `main` it also pushes the image to
-  GitHub Container Registry (ghcr.io). You can also start it by hand from the
-  Actions tab, for example if the image is missing.
+  and builds an OCI image from `app/Containerfile` with
+  [Buildah](https://buildah.io/) (no Docker involved). On `main` it also
+  pushes the image to GitHub Container Registry (ghcr.io). You can also start
+  it by hand from the Actions tab, for example if the image is missing.
 - **Terraform Infra** is started by hand from the Actions tab. When you pick
   `apply` it:
   1. checks that the app's image exists on ghcr.io and can be downloaded,

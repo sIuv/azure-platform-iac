@@ -63,12 +63,17 @@ jobs:
         id: image
         uses: ./.github/actions/app-image
 
-      # Labeln kopplar paketet på ghcr.io till det här repot. Utan den skapar
-      # docker push paketet utan koppling, och då nekas workflowens token att
-      # skriva till det (pushen misslyckas med "denied" på sista steget).
+      # Byggs med buildah, som är byggt kring OCI-standarden, i stället för
+      # Docker. --format oci ger en ren OCI-image (inte Dockers eget format).
+      #
+      # Labeln kopplar paketet på ghcr.io till det här repot. Utan den skapas
+      # paketet utan koppling, och då nekas workflowens token att skriva till
+      # det (pushen misslyckas med "denied" på sista steget).
       - name: App Build
         run: >
-          docker build
+          buildah build
+          --format oci
+          --file Containerfile
           --tag "${{ steps.image.outputs.name }}"
           --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}"
           .
@@ -77,8 +82,8 @@ jobs:
       # i registryt.
       - name: Login To GHCR
         if: github.event_name != 'pull_request'
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | buildah login ghcr.io --username "${{ github.actor }}" --password-stdin
 
       - name: App Push
         if: github.event_name != 'pull_request'
-        run: docker push "${{ steps.image.outputs.name }}"
+        run: buildah push "${{ steps.image.outputs.name }}"
