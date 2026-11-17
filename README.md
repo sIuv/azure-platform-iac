@@ -5,13 +5,14 @@ and a Kubernetes cluster (AKS) in Azure, all from code.
 
 ## How it's organised
 
-There are two folders, and you run them in order:
+All Terraform code lives in `terraform/`. There are two folders, and you run
+them in order:
 
-- **`bootstrap/`** creates a storage account in Azure. That's where Terraform
+- **`terraform/bootstrap/`** creates a storage account in Azure. That's where Terraform
   keeps its state file, which is its memory of what it has built. You only
   run this once.
-- **`infra/`** is the actual setup: a resource group, a network and the
-  AKS cluster. Its state is saved in the storage account from `bootstrap/`.
+- **`terraform/infra/`** is the actual setup: a resource group, a network and the
+  AKS cluster. Its state is saved in the storage account from `terraform/bootstrap/`.
 
 Why two folders? Terraform needs somewhere to save its state before it can
 build anything else, so that place has to exist first.
@@ -29,7 +30,7 @@ az account set --subscription <your-subscription-id>
 ## Step 1: Create the state storage
 
 ```bash
-cd bootstrap
+cd terraform/bootstrap
 terraform init
 terraform apply -var subscription_id=<your-subscription-id>
 ```
@@ -37,8 +38,8 @@ terraform apply -var subscription_id=<your-subscription-id>
 When it's done it prints a few names. Copy `storage_account_name`, you'll need
 it in the next step.
 
-Heads up: `bootstrap/` keeps its own state in a local file,
-`bootstrap/terraform.tfstate`. Don't delete it and don't commit it.
+Heads up: `terraform/bootstrap/` keeps its own state in a local file,
+`terraform/bootstrap/terraform.tfstate`. Don't delete it and don't commit it.
 
 ## Step 2: Build the cluster
 
@@ -71,11 +72,11 @@ The cluster costs money for as long as it exists, so remove it when you're
 not using it:
 
 ```bash
-cd infra
+cd terraform/infra
 terraform destroy -var subscription_id=<your-subscription-id>
 ```
 
-The storage account from `bootstrap/` costs almost nothing, so you can leave
+The storage account from `terraform/bootstrap/` costs almost nothing, so you can leave
 it. Only destroy it when you're finished with the whole project.
 
 ## Skipping `-var subscription_id=...`
@@ -86,16 +87,53 @@ Terraform reads that file automatically.
 
 Don't commit `terraform.tfvars`, `backend.hcl` or any `*.tfstate` files.
 
+## The app
+
+`app/` is a tiny Python web app that gets deployed to the cluster, just to
+prove that everything works. It has two pages:
+
+- `/` says hello and tells you which pod answered
+- `/health` answers `{"status": "ok"}`
+
+The Kubernetes files are in `app/k8s/`. The app isn't reachable from the
+internet. To look at it yourself once it's deployed:
+
+```bash
+kubectl port-forward --namespace hello-app service/hello-app 8080:80
+```
+
+Then open http://localhost:8080.
+
+The app uses [uv](https://docs.astral.sh/uv/) for Python and its
+dependencies. Running the tests locally:
+
+```bash
+cd app
+uv run pytest
+```
+
+uv installs the right Python version and the dependencies by itself the first
+time. To add a dependency, use `uv add <package>` instead of editing
+`pyproject.toml` by hand, so that `uv.lock` stays up to date.
+
 ## GitHub Actions
 
 - **Terraform Validate** runs on every push. It checks that the code is
   formatted and valid. It doesn't log in to Azure or build anything.
-- **Terraform Infra** is started by hand from the Actions tab. It can build or
-  tear down `infra/`, and can tear it down automatically after 15, 30 or 60
-  minutes so nothing is left running by mistake. It needs an Azure login set
-  up for GitHub (OIDC) first, which isn't in place yet.
+- **Terraform Infra** is started by hand from the Actions tab. When you pick
+  `apply` it:
+  1. builds the cluster with Terraform, and at the same time tests the app and
+     pushes it as a container image to GitHub Container Registry (ghcr.io)
+  2. deploys the app to the cluster
+  3. runs a smoke test that checks `/health`
+  4. tears everything down after 15, 30 or 60 minutes, so nothing is left
+     running by mistake
 
-`bootstrap/` is never run from GitHub, only by hand from your own machine.
+  It needs an Azure login set up for GitHub (OIDC) first, which isn't in
+  place yet. The app's image on ghcr.io also has to be public, otherwise the
+  cluster isn't allowed to download it.
+
+`terraform/bootstrap/` is never run from GitHub, only by hand from your own machine.
 
 ## Ideas for later
 
