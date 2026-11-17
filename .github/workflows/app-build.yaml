@@ -63,8 +63,15 @@ jobs:
         id: image
         uses: ./.github/actions/app-image
 
+      # Labeln kopplar paketet på ghcr.io till det här repot. Utan den skapar
+      # docker push paketet utan koppling, och då nekas workflowens token att
+      # skriva till det (pushen misslyckas med "denied" på sista steget).
       - name: App Build
-        run: docker build --tag "${{ steps.image.outputs.name }}" .
+        run: >
+          docker build
+          --tag "${{ steps.image.outputs.name }}"
+          --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}"
+          .
 
       # Pull requests pushar inte, så att bara kod som finns på main hamnar
       # i registryt.
