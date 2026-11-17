@@ -70,7 +70,7 @@ env:
 jobs:
   terraform-apply:
     if: inputs.action == 'apply'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Att skapa AKS tar ofta 10–15 minuter.
     timeout-minutes: 30
     outputs:
@@ -108,7 +108,7 @@ jobs:
   # Körs samtidigt som terraform-apply, eftersom de inte är beroende av varandra.
   app-build:
     if: inputs.action == 'apply'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -150,7 +150,7 @@ jobs:
 
   app-deploy:
     needs: [terraform-apply, app-build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     defaults:
       run:
@@ -193,7 +193,7 @@ jobs:
     # always() gör att jobbet körs även om något jobb före misslyckades eller
     # om körningen avbröts. Annars kan resurser bli kvar och kosta.
     if: always() && inputs.action == 'apply' && inputs.auto_destroy_minutes != '0'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # Marginal över den längsta timern (60 min) plus tid för destroy.
     timeout-minutes: 90
     defaults:
@@ -227,7 +227,7 @@ jobs:
 
   manual-destroy:
     if: inputs.action == 'destroy'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     defaults:
       run:
