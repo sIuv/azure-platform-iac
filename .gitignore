@@ -1,0 +1,42 @@
+# --- Terraform ---
+
+# Nedladdade providers och moduler. Skapas igen av terraform init.
+.terraform/
+
+# State kan innehålla hemligheter i klartext. infra/ sparar sin state i
+# Azure, men bootstrap/ har den lokalt och den får inte hamna i git.
+*.tfstate
+*.tfstate.*
+
+# Plan-filer från terraform plan -out. Kan också innehålla hemligheter.
+tfplan
+*.tfplan
+
+# Egna värden, t.ex. subscription-id. Exempelfilerna *.example checkas in.
+*.tfvars
+*.tfvars.json
+backend.hcl
+
+# Loggfiler som skapas om Terraform kraschar.
+crash.log
+crash.*.log
+
+# Lokala överskrivningar som bara gäller den egna datorn.
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# OBS: .terraform.lock.hcl ska INTE ignoreras. Den låser provider-versionerna
+# så att alla, även pipelinen, använder samma versioner.
+
+# --- Python (app/) ---
+
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# --- macOS ---
+
+.DS_Store
