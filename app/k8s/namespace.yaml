@@ -1,0 +1,6 @@
+# Eget namespace, så att appen hålls isär från Kubernetes egna system-poddar
+# och kan tas bort i ett svep med: kubectl delete namespace hello-app
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hello-app

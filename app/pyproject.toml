@@ -1,0 +1,25 @@
+# Beskriver appen och dess beroenden. Hanteras med uv:
+#   uv sync          installera allt i .venv
+#   uv run pytest    kör testerna
+#   uv add <paket>   lägg till ett beroende (uppdaterar även uv.lock)
+
+[project]
+name = "hello-app"
+version = "0.1.0"
+description = "Liten webbapp som deployas till AKS för att visa att klustret fungerar"
+requires-python = ">=3.12"
+dependencies = [
+    "flask>=3.1",
+    "gunicorn>=23.0",
+]
+
+# Beroenden som bara behövs för att utveckla och testa, inte i imagen.
+[dependency-groups]
+dev = [
+    "pytest>=8.4",
+]
+
+[tool.pytest.ini_options]
+# Gör att testerna kan importera hello_app utan att appen installeras som paket.
+pythonpath = ["."]
+testpaths = ["tests"]

@@ -1,0 +1,41 @@
+# Image för hello_app. Byggs och pushas till GitHub Container Registry av
+# workflowen Terraform Infra.
+
+FROM python:3.12-slim
+
+# uv hämtas från sin officiella image. Versionen är låst så att bygget blir
+# likadant varje gång.
+COPY --from=ghcr.io/astral-sh/uv:0.13.7 /uv /usr/local/bin/uv
+
+# PYTHONUNBUFFERED: Python skriver annars loggar i block, vilket gör att de
+#   syns sent i kubectl logs.
+# UV_COMPILE_BYTECODE: förkompilera Python-filerna, så att appen startar snabbare.
+# UV_LINK_MODE=copy: kopiera filerna i stället för att länka dem, eftersom
+#   uv:s cache inte finns kvar i den färdiga imagen.
+ENV PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
+
+WORKDIR /app
+
+# Beroendena installeras före koden, så att det lagret kan återanvändas
+# när bara koden ändras. --locked: bygget misslyckas om uv.lock inte stämmer
+# med pyproject.toml. --no-dev: pytest behövs inte i imagen.
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-dev --no-install-project
+
+COPY hello_app.py .
+
+# Gör så att gunicorn från .venv hittas utan att skriva hela sökvägen.
+ENV PATH="/app/.venv/bin:$PATH"
+
+# Kör inte som root. Användaren skapas med ett fast id så att Kubernetes
+# kan kontrollera att containern inte körs som root (runAsNonRoot).
+RUN useradd --uid 10001 --no-create-home appuser
+USER 10001
+
+# Port 8080 i stället för 80, eftersom en användare som inte är root inte
+# får lyssna på portar under 1024.
+EXPOSE 8080
+
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "hello_app:create_app()"]

@@ -1,0 +1,59 @@
+# Kör appen i Kubernetes. Imagens fullständiga namn och tagg sätts av
+# kustomization.yaml, så här räcker det korta namnet hello-app.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hello-app
+  labels:
+    app: hello-app
+spec:
+  # Två kopior, så att man kan se att olika poddar svarar på /.
+  replicas: 2
+  selector:
+    matchLabels:
+      app: hello-app
+  template:
+    metadata:
+      labels:
+        app: hello-app
+    spec:
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: hello-app
+          image: hello-app
+          ports:
+            - name: http
+              containerPort: 8080
+          # Små värden, eftersom klustret bara har en liten nod (Standard_B2s).
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+          # readiness: skicka trafik till podden först när den svarar.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 5
+          # liveness: starta om podden om den slutar svara.
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # gunicorn behöver en skrivbar /tmp, eftersom resten av
+            # filsystemet är skrivskyddat.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -1,0 +1,15 @@
+# Ger poddarna ett gemensamt namn och en intern IP i klustret.
+# ClusterIP betyder att appen inte nås från internet. Smoke-testet når den
+# via kubectl port-forward i stället.
+apiVersion: v1
+kind: Service
+metadata:
+  name: hello-app
+spec:
+  type: ClusterIP
+  selector:
+    app: hello-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
