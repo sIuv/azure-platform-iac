@@ -1,0 +1,77 @@
+# Testar och bygger appen i app/ varje gång något i app/ ändras.
+#
+# - Pull request: kör testerna och bygger imagen, men pushar ingenting.
+# - Push till main: kör testerna, bygger och pushar imagen till ghcr.io.
+# - Manuellt (Run workflow): samma som push till main. Används om imagen
+#   saknas, till exempel första gången.
+#
+# Terraform Infra bygger inte appen själv, utan deployar imagen härifrån.
+# Imagens tagg är id:t för senaste commit som ändrade app/, se
+# .github/actions/app-image/action.yaml.
+#
+# Nya paket på ghcr.io blir alltid privata. Efter första pushen måste paketet
+# göras publikt en gång (Packages → hello-app → Package settings → Change
+# visibility → Public), annars får AKS inte hämta imagen.
+
+name: App Build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - ".github/workflows/app-build.yaml"
+      - ".github/actions/app-image/**"
+  pull_request:
+    paths:
+      - "app/**"
+      - ".github/workflows/app-build.yaml"
+      - ".github/actions/app-image/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  app:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write # för att få pusha imagen till ghcr.io
+    defaults:
+      run:
+        working-directory: ./app
+
+    steps:
+      # Hela historiken behövs för att hitta senaste ändringen i app/.
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # setup-uv har ingen tagg för bara huvudversionen (v10), därför exakt version.
+      # Python-versionen läses från app/.python-version och hämtas av uv själv.
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v10.3.3
+
+      # --locked: misslyckas om uv.lock inte stämmer med pyproject.toml.
+      - name: App Test
+        run: uv run --locked pytest
+
+      - name: App Image
+        id: image
+        uses: ./.github/actions/app-image
+
+      - name: App Build
+        run: docker build --tag "${{ steps.image.outputs.name }}" .
+
+      # Pull requests pushar inte, så att bara kod som finns på main hamnar
+      # i registryt.
+      - name: Login To GHCR
+        if: github.event_name != 'pull_request'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: App Push
+        if: github.event_name != 'pull_request'
+        run: docker push "${{ steps.image.outputs.name }}"

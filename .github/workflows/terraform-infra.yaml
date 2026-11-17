@@ -4,11 +4,12 @@
 # Tänkt för labb: vid "apply" kan allt rivas automatiskt efter en timer, så att
 # det inte står kvar och kostar pengar om man glömmer bort det.
 #
+# Appen byggs inte här, utan av workflowen App Build varje gång app/ ändras.
+# Här deployas den image som App Build redan har pushat.
+#
 # Ordning vid apply:
 #
-#   terraform-apply ─┐
-#                    ├─► app-deploy ─► auto-destroy (väntar, river sedan)
-#   app-build ───────┘
+#   check-image ─► terraform-apply ─► app-deploy ─► auto-destroy (väntar, river sedan)
 #
 # Förutsättningar i Azure (skapas inte av den här workflowen):
 #   - En identitet med en federated credential som litar på det här repot
@@ -68,7 +69,44 @@ env:
   TERRAFORM_DIR: ./terraform/infra
 
 jobs:
+  # Kontrollerar att appens image finns och går att hämta utan inloggning,
+  # innan AKS skapas. Annars skulle klustret byggas i onödan och deployen
+  # misslyckas först efter 10–15 minuter.
+  check-image:
+    if: inputs.action == 'apply'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 5
+    outputs:
+      image: ${{ steps.image.outputs.name }}
+
+    steps:
+      # Hela historiken behövs för att hitta senaste ändringen i app/.
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: App Image
+        id: image
+        uses: ./.github/actions/app-image
+
+      # Ingen docker login, med flit: det är så AKS hämtar imagen, så går det
+      # här går det även där.
+      - name: Check Image Is Pullable
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: |
+          if docker manifest inspect "$IMAGE" > /dev/null; then
+            echo "OK: $IMAGE finns och är publik."
+            exit 0
+          fi
+          echo "FEL: $IMAGE går inte att hämta utan inloggning." >&2
+          echo "Antingen är den inte byggd (kör App Build) eller så är paketet" >&2
+          echo "privat (Packages → hello-app → Package settings → Change visibility → Public)." >&2
+          exit 1
+
   terraform-apply:
+    needs: check-image
     if: inputs.action == 'apply'
     runs-on: ubuntu-26.04
     # Att skapa AKS tar ofta 10–15 minuter.
@@ -105,51 +143,8 @@ jobs:
           echo "resource-group=$(terraform output -raw resource_group_name)" >> "$GITHUB_OUTPUT"
           echo "aks-name=$(terraform output -raw aks_name)" >> "$GITHUB_OUTPUT"
 
-  # Körs samtidigt som terraform-apply, eftersom de inte är beroende av varandra.
-  app-build:
-    if: inputs.action == 'apply'
-    runs-on: ubuntu-26.04
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      packages: write # för att få pusha imagen till ghcr.io
-    outputs:
-      image: ${{ steps.image.outputs.name }}
-    defaults:
-      run:
-        working-directory: ./app
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v7
-
-      # setup-uv har ingen tagg för bara huvudversionen (v10), därför exakt version.
-      # setup-uv installerar uv. Python-versionen läses från app/.python-version
-      # och hämtas av uv själv, så setup-python behövs inte.
-      - name: Setup uv
-        uses: astral-sh/setup-uv@v10.3.3
-
-      # --locked: misslyckas om uv.lock inte stämmer med pyproject.toml.
-      - name: App Test
-        run: uv run --locked pytest
-
-      # Taggen är commit-id:t, så att man alltid vet exakt vilken kod som körs.
-      # ghcr.io kräver små bokstäver, därav ${GITHUB_REPOSITORY,,}.
-      - name: Image Name
-        id: image
-        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}/hello-app:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-
-      - name: Login To GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io --username "${{ github.actor }}" --password-stdin
-
-      - name: App Build
-        run: docker build --tag "${{ steps.image.outputs.name }}" .
-
-      - name: App Push
-        run: docker push "${{ steps.image.outputs.name }}"
-
   app-deploy:
-    needs: [terraform-apply, app-build]
+    needs: [check-image, terraform-apply]
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     defaults:
@@ -173,10 +168,10 @@ jobs:
           --resource-group "${{ needs.terraform-apply.outputs.resource-group }}"
           --name "${{ needs.terraform-apply.outputs.aks-name }}"
 
-      # Pekar ut imagen som app-build just pushade. Ändringen görs bara i
+      # Pekar ut imagen som check-image kontrollerade. Ändringen görs bara i
       # runnerns kopia av repot och committas inte.
       - name: Set Image
-        run: kustomize edit set image "hello-app=${{ needs.app-build.outputs.image }}"
+        run: kustomize edit set image "hello-app=${{ needs.check-image.outputs.image }}"
 
       - name: App Deploy
         run: kubectl apply -k .
@@ -189,10 +184,16 @@ jobs:
         run: ./smoke-test.sh
 
   auto-destroy:
-    needs: [terraform-apply, app-build, app-deploy]
+    needs: [terraform-apply, app-deploy]
     # always() gör att jobbet körs även om något jobb före misslyckades eller
     # om körningen avbröts. Annars kan resurser bli kvar och kosta.
-    if: always() && inputs.action == 'apply' && inputs.auto_destroy_minutes != '0'
+    # Hoppades terraform-apply över (check-image misslyckades) skapades inget,
+    # och då finns inget att riva.
+    if: >-
+      always()
+      && inputs.action == 'apply'
+      && inputs.auto_destroy_minutes != '0'
+      && needs.terraform-apply.result != 'skipped'
     runs-on: ubuntu-26.04
     # Marginal över den längsta timern (60 min) plus tid för destroy.
     timeout-minutes: 90

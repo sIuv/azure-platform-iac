@@ -1,0 +1,33 @@
+# Räknar ut det fullständiga namnet på appens image, t.ex.
+#   ghcr.io/siuv/azure-platform-iac/hello-app:<commit>
+#
+# Taggen är id:t för den senaste commit som ändrade något i app/, inte den
+# commit som workflowen körs på. Då får App Build (som bygger imagen) och
+# Terraform Infra (som deployar den) alltid samma namn, även om det har
+# kommit commits efteråt som bara ändrade annat än appen.
+#
+# Kräver att repot är utcheckat med hela historiken (fetch-depth: 0),
+# annars hittar git log inte den senaste ändringen i app/.
+
+name: App Image
+description: Räkna ut namnet på appens image från senaste ändringen i app/
+
+outputs:
+  name:
+    description: Fullständigt namn med tagg
+    value: ${{ steps.image.outputs.name }}
+
+runs:
+  using: composite
+  steps:
+    # ghcr.io kräver små bokstäver, därav ${GITHUB_REPOSITORY,,}.
+    - name: Image Name
+      id: image
+      shell: bash
+      run: |
+        app_commit=$(git log -1 --format=%H -- app/)
+        if [[ -z "$app_commit" ]]; then
+          echo "FEL: hittade ingen commit som ändrar app/. Är repot utcheckat med fetch-depth: 0?" >&2
+          exit 1
+        fi
+        echo "name=ghcr.io/${GITHUB_REPOSITORY,,}/hello-app:${app_commit}" >> "$GITHUB_OUTPUT"

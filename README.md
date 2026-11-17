@@ -120,18 +120,29 @@ time. To add a dependency, use `uv add <package>` instead of editing
 
 - **Terraform Validate** runs on every push. It checks that the code is
   formatted and valid. It doesn't log in to Azure or build anything.
+- **App Build** runs whenever something in `app/` changes. It runs the tests
+  and builds the container image. On `main` it also pushes the image to
+  GitHub Container Registry (ghcr.io). You can also start it by hand from the
+  Actions tab, for example if the image is missing.
 - **Terraform Infra** is started by hand from the Actions tab. When you pick
   `apply` it:
-  1. builds the cluster with Terraform, and at the same time tests the app and
-     pushes it as a container image to GitHub Container Registry (ghcr.io)
-  2. deploys the app to the cluster
-  3. runs a smoke test that checks `/health`
-  4. tears everything down after 15, 30 or 60 minutes, so nothing is left
+  1. checks that the app's image exists on ghcr.io and can be downloaded,
+     before it creates anything
+  2. builds the cluster with Terraform
+  3. deploys the app to the cluster
+  4. runs a smoke test that checks `/health`
+  5. tears everything down after 15, 30 or 60 minutes, so nothing is left
      running by mistake
 
-  It needs an Azure login set up for GitHub (OIDC) first, which isn't in
-  place yet. The app's image on ghcr.io also has to be public, otherwise the
-  cluster isn't allowed to download it.
+  It needs an Azure login set up for GitHub (OIDC) first.
+
+The image is tagged with the commit that last changed `app/`, so App Build
+and Terraform Infra always agree on which image to use.
+
+New packages on ghcr.io are always private. After App Build has pushed the
+image the first time, make it public once: your GitHub profile → Packages →
+hello-app → Package settings → Change visibility → Public. Otherwise the
+cluster isn't allowed to download it.
 
 `terraform/bootstrap/` is never run from GitHub, only by hand from your own machine.
 
