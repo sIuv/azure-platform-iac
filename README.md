@@ -3,6 +3,50 @@
 A small project where I'm learning Terraform on Azure. It sets up a network
 and a Kubernetes cluster (AKS) in Azure, all from code.
 
+## The big picture
+
+```text
+ Your machine        GitHub Actions                    ghcr.io
+┌─────────────┐     ┌─────────────────┐  push image   ┌─────────────────┐
+│ bootstrap   │     │ App Build       ├──────────────►│ hello-app image │
+│ (run once)  │     └─────────────────┘               └────────┬────────┘
+└──────┬──────┘     ┌─────────────────┐                        │
+       │            │ Terraform Infra │                        │
+       │            └───┬─────────┬───┘                        │
+       │ creates        │         │ OIDC login:                │ the cluster
+       │                │         │ build, deploy, destroy     │ pulls the image
+       │                │ state   │                            │
+┌──────┼────────────────┼─────────┼────────────────────────────┼─────────┐
+│ Azure│                │         │                            │         │
+│      ▼                ▼         ▼                            ▼         │
+│ ┌──────────────────────┐   ┌─────────────────────────────────────────┐ │
+│ │ rg-tfdemo-tfstate    │   │ rg-demo-aks                             │ │
+│ │ always there         │   │ only there while you're using it        │ │
+│ │                      │   │                                         │ │
+│ │ storage account      │   │ vnet-demo (10.0.0.0/16)                 │ │
+│ │ └─ tfstate           │   │ └─ snet-aks (10.0.1.0/24)               │ │
+│ │    └─ aks-dev.tfstate│   │    └─ aks-demo (1 node)                 │ │
+│ │                      │   │       └─ namespace hello-app            │ │
+│ │ identity for GitHub  │   │          ├─ Deployment (2 pods)         │ │
+│ │ (made by hand)       │   │          └─ Service (internal only)     │ │
+│ └──────────────────────┘   └─────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+What happens when you start **Terraform Infra** with `apply`:
+
+```text
+ check-image ───► terraform-apply ───► app-deploy ───► auto-destroy
+ Can the image    Creates the          Deploys the     Waits 15, 30 or 60
+ be downloaded?   network and          app and runs    minutes, then
+                  the cluster          a smoke test    removes everything
+```
+
+- If `check-image` fails, nothing has been created, so there's nothing to remove.
+- If a later step fails, `auto-destroy` skips the wait and removes everything
+  straight away.
+- If you pick `0` minutes there's no timer. You run `destroy` yourself.
+
 ## How it's organised
 
 All Terraform code lives in `terraform/`. There are two folders, and you run
@@ -146,6 +190,65 @@ hello-app → Package settings → Change visibility → Public. Otherwise the
 cluster isn't allowed to download it.
 
 `terraform/bootstrap/` is never run from GitHub, only by hand from your own machine.
+
+## Why it's built this way
+
+**Terraform**
+
+- **Bootstrap is separate.** The state storage has to exist before Terraform
+  can save state in it, so it can't be part of the setup it stores state for.
+- **State lives in Azure, not on one laptop.** GitHub's runners are thrown away
+  after every job, so a local state file would be lost. The storage account
+  also locks the state, so two runs can't change it at once.
+- **Versioning is on for the state.** If the state file gets damaged, an older
+  version can be restored.
+- **Only the Azure services we use are registered.** By default the provider
+  registers about 20 services, which made the first run hang for many minutes.
+
+**Logging in**
+
+- **GitHub logs in with OIDC.** GitHub proves who it is with a short-lived
+  token, so there's no Azure password stored that could leak or expire.
+- **State is read with Entra ID (`use_azuread_auth`).** Access is controlled by
+  a role, so the storage account's master keys aren't used.
+
+**The cluster**
+
+- **`Standard_D2ls_v5` nodes.** It's a small size that meets AKS's minimum of
+  2 vCPU and 4 GiB. `Standard_B2s` wasn't allowed on this subscription and
+  `Standard_B2als_v2` failed because Azure had no free capacity.
+- **Azure CNI overlay.** Pods get addresses from their own range instead of
+  from the subnet, so a small subnet is enough.
+- **Free AKS tier and one node.** This is a lab, so it doesn't need an uptime
+  guarantee or spare nodes.
+- **Everything is removed on a timer.** The node costs money for as long as it
+  exists, and it's easy to forget. If `terraform destroy` fails, the whole
+  resource group is deleted instead.
+
+**The app**
+
+- **Building is separate from deploying.** The image is built when `app/`
+  changes, so starting the cluster doesn't have to wait for a build.
+- **The image tag is the last commit that changed `app/`.** Both workflows can
+  work out the same tag by themselves, and a tag always points to one exact
+  version of the code.
+- **The image is checked first.** Creating a cluster takes 10 minutes or more,
+  so a missing image should stop the run before that.
+- **OCI image built with Buildah.** OCI is the open image standard, so nothing
+  here depends on Docker.
+- **Plain Kubernetes YAML.** With one small app, a tool like Kustomize or Helm
+  would add more to learn than it saves.
+- **The app runs locked down.** It isn't root, and its file system is read-only.
+- **No public address.** The smoke test reaches the app with
+  `kubectl port-forward`, so nothing is exposed to the internet.
+
+**Shortcuts that are fine for a lab, but not for production**
+
+- The pipeline's identity is `Contributor` on the whole subscription.
+- That identity and its login for GitHub were made by hand, not with Terraform.
+- `az aks get-credentials` gives full admin access to the cluster. Production
+  should use Entra ID login and turn local accounts off.
+- The image is public, so the cluster doesn't need a login to download it.
 
 ## Ideas for later
 
