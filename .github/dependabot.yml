@@ -1,19 +1,66 @@
+# Dependabot öppnar pull requests när något som repot är beroende av får en
+# ny version. Det kontrolleras en gång i veckan, så att det inte blir för
+# många pull requests.
+#
+# Mapparna listas uttryckligen i stället för "**/*", så att det syns här
+# vilka filer som bevakas. Lägg till en mapp här när en ny läggs till i repot.
+#
+# Små uppdateringar (minor och patch) samlas i en pull request per ekosystem.
+# Stora uppdateringar (major) kommer var för sig, eftersom de kan kräva
+# ändringar i koden, till exempel azurerm 4 → 5.
+#
+# Dokumentation: https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference
+
 version: 2
 updates:
-  - package-ecosystem: "docker"
+  # Actions i workflows (/.github/workflows) och i de egna composite
+  # actions (/.github/actions/*), till exempel actions/checkout.
+  - package-ecosystem: "github-actions"
     directories:
-      - "**/*"
+      - "/"
+      - "/.github/actions/*"
     schedule:
       interval: "weekly"
+    commit-message:
+      prefix: "ci"
+    groups:
+      github-actions:
+        update-types: ["minor", "patch"]
 
+  # Providers i Terraform (azurerm och random). Uppdaterar även
+  # .terraform.lock.hcl i varje mapp.
   - package-ecosystem: "terraform"
     directories:
-      - "**/*"
+      - "/terraform/bootstrap"
+      - "/terraform/infra"
     schedule:
       interval: "weekly"
+    commit-message:
+      prefix: "build"
+    groups:
+      terraform-providers:
+        update-types: ["minor", "patch"]
 
+  # Basimagen i app/Containerfile (python) och uv-imagen som kopieras in.
+  - package-ecosystem: "docker"
+    directories:
+      - "/app"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "build"
+    groups:
+      container-images:
+        update-types: ["minor", "patch"]
+
+  # Python-paketen i app/pyproject.toml och app/uv.lock.
   - package-ecosystem: "uv"
     directories:
-      - "**/*"
+      - "/app"
     schedule:
       interval: "weekly"
+    commit-message:
+      prefix: "build"
+    groups:
+      python-packages:
+        update-types: ["minor", "patch"]

@@ -191,6 +191,12 @@ cluster isn't allowed to download it.
 
 `terraform/bootstrap/` is never run from GitHub, only by hand from your own machine.
 
+**Dependabot** (`.github/dependabot.yml`) checks once a week for new versions
+of the GitHub Actions, the Terraform providers, the container images and the
+Python packages, and opens pull requests for them. Small updates are grouped
+into one pull request per kind. Big (major) updates come one at a time, since
+they may need code changes.
+
 ## Why it's built this way
 
 **Terraform**
