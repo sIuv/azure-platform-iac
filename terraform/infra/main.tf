@@ -34,6 +34,13 @@ resource "azurerm_kubernetes_cluster" "main" {
     vnet_subnet_id = azurerm_subnet.aks.id
   }
 
+  # Krävs från azurerm 5. "Manual" betyder att noderna kommer från
+  # default_node_pool ovan, precis som tidigare. "Auto" skulle låta Azure
+  # skapa och ta bort noder själv (Node Auto Provisioning).
+  node_provisioning_profile {
+    mode = "Manual"
+  }
+
   identity {
     type = "SystemAssigned"
   }
