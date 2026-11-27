@@ -53,7 +53,7 @@ jobs:
       # setup-uv har ingen tagg för bara huvudversionen (v10), därför exakt version.
       # Python-versionen läses från app/.python-version och hämtas av uv själv.
       - name: Setup uv
-        uses: astral-sh/setup-uv@v10.3.3
+        uses: astral-sh/setup-uv@v10.4.0
 
       # --locked: misslyckas om uv.lock inte stämmer med pyproject.toml.
       - name: App Test
