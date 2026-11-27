@@ -19,6 +19,12 @@ resource "azurerm_subnet" "aks" {
   address_prefixes     = [var.aks_subnet_cidr]
 }
 
+# Trivy-undantag (granskat 2026-11-27):
+# AZU-0041 vill att API-servern bara nås från vissa IP-adresser. GitHubs
+# runners byter IP-adress hela tiden, så pipelinen skulle då inte kunna köra
+# kubectl. Åtkomst kräver ändå inloggning, och klustret lever bara en kort
+# stund. Ta bort undantaget om pipelinen flyttas till en runner med fast IP.
+#trivy:ignore:AZU-0041
 resource "azurerm_kubernetes_cluster" "main" {
   name                = "aks-${var.prefix}"
   location            = azurerm_resource_group.main.location
@@ -26,6 +32,9 @@ resource "azurerm_kubernetes_cluster" "main" {
   dns_prefix          = "aks-${var.prefix}"
   sku_tier            = "Free"
   tags                = var.tags
+
+  # Är redan standard, men skrivs ut så att det syns (och så att Trivy ser det).
+  role_based_access_control_enabled = true
 
   default_node_pool {
     name           = "system"
@@ -45,9 +54,14 @@ resource "azurerm_kubernetes_cluster" "main" {
     type = "SystemAssigned"
   }
 
+  # Cilium gör att klustret kan följa NetworkPolicy, alltså regler för vilka
+  # poddar som får prata med varandra. Utan det ignoreras sådana regler.
+  # Cilium är Microsofts rekommenderade val för Azure CNI och kostar inget extra.
   network_profile {
     network_plugin      = "azure"
     network_plugin_mode = "overlay"
+    network_data_plane  = "cilium"
+    network_policy      = "cilium"
     pod_cidr            = "10.244.0.0/16"
     service_cidr        = "10.2.0.0/16"
     dns_service_ip      = "10.2.0.10"

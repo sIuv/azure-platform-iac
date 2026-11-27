@@ -55,6 +55,12 @@ resource "azurerm_resource_group" "state" {
   location = var.location
 }
 
+# Trivy-undantag (granskat 2026-11-27):
+# AZU-0012 vill att lagringskontot nekar all nätverkstrafik som standard.
+# GitHubs runners byter IP-adress hela tiden och måste kunna läsa state, så
+# det skulle kräva en privat endpoint och en egen runner. Åtkomst kräver ändå
+# inloggning med Entra ID och rollen Storage Blob Data Contributor.
+#trivy:ignore:AZU-0012
 resource "azurerm_storage_account" "state" {
   name                     = "st${var.prefix}tfstate${random_string.suffix.result}"
   resource_group_name      = azurerm_resource_group.state.name
@@ -66,12 +72,24 @@ resource "azurerm_storage_account" "state" {
   blob_properties {
     versioning_enabled = true
   }
+
+  # Här ligger state för terraform/infra. Försvinner det vet Terraform inte
+  # längre vad som finns i Azure. Vill du verkligen riva allt: ta bort
+  # blocket först, och kör sedan terraform destroy.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "azurerm_storage_container" "state" {
   name                  = "tfstate"
   storage_account_id    = azurerm_storage_account.state.id
   container_access_type = "private"
+
+  # Samma skäl som för lagringskontot ovan.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Lets you (the current user) read/write state using Entra ID auth.

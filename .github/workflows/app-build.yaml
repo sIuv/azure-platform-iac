@@ -5,6 +5,10 @@
 # - Manuellt (Run workflow): samma som push till main. Används om imagen
 #   saknas, till exempel första gången.
 #
+# Trivy kontrollerar Containerfile och app/k8s/ före bygget, och den färdiga
+# imagen efter bygget men före push. Hittar den något allvarligt stoppas
+# workflowen, och ingenting pushas.
+#
 # Terraform Infra bygger inte appen själv, utan deployar imagen härifrån.
 # Imagens tagg är id:t för senaste commit som ändrade app/, se
 # .github/actions/app-image/action.yaml.
@@ -31,6 +35,12 @@ on:
 
 permissions:
   contents: read
+
+env:
+  # Samma version som i terraform-validate.yaml. Dependabot uppdaterar inte
+  # den, så höj den för hand. Trivy v0.69.4–v0.69.6 var skadliga, så
+  # kontrollera Trivys säkerhetsmeddelanden innan du byter version.
+  TRIVY_VERSION: v0.76.2
 
 jobs:
   app:
@@ -59,6 +69,18 @@ jobs:
       - name: App Test
         run: uv run --locked pytest
 
+      # Letar efter osäkra inställningar i Containerfile och app/k8s/, till
+      # exempel en container som körs som root. Samma regler för stopp och
+      # undantag som i Terraform Validate.
+      - name: Trivy Config Scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: app
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          version: ${{ env.TRIVY_VERSION }}
+
       - name: App Image
         id: image
         uses: ./.github/actions/app-image
@@ -77,6 +99,27 @@ jobs:
           --tag "${{ steps.image.outputs.name }}"
           --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}"
           .
+
+      # Trivy läser imagen från en fil, eftersom den inte är pushad än och
+      # buildah inte har någon Docker-daemon som Trivy kan fråga.
+      - name: App Image Export
+        run: buildah push "${{ steps.image.outputs.name }}" "oci-archive:${{ runner.temp }}/hello-app.tar"
+
+      # Letar efter kända sårbarheter i imagen innan den pushas, så att en
+      # sårbar image aldrig hamnar på ghcr.io. ignore-unfixed: sårbarheter som
+      # ännu saknar rättelse går inte att åtgärda, och skulle annars stoppa
+      # varje bygge tills Debian eller Python har släppt en rättelse.
+      - name: Trivy Image Scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          input: ${{ runner.temp }}/hello-app.tar
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          version: ${{ env.TRIVY_VERSION }}
+          # Trivy installerades redan av steget Trivy Config Scan.
+          skip-setup-trivy: true
 
       # Pull requests pushar inte, så att bara kod som finns på main hamnar
       # i registryt.

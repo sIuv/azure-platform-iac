@@ -121,7 +121,10 @@ terraform destroy -var subscription_id=<your-subscription-id>
 ```
 
 The storage account from `terraform/bootstrap/` costs almost nothing, so you can leave
-it. Only destroy it when you're finished with the whole project.
+it. Only destroy it when you're finished with the whole project. The storage
+account and its container have `prevent_destroy`, so Terraform refuses to
+delete them by mistake. Remove those `lifecycle` blocks first if you really
+want them gone.
 
 ## Skipping `-var subscription_id=...`
 
@@ -163,12 +166,20 @@ time. To add a dependency, use `uv add <package>` instead of editing
 ## GitHub Actions
 
 - **Terraform Validate** runs on every push. It checks that the code is
-  formatted and valid. It doesn't log in to Azure or build anything.
-- **App Build** runs whenever something in `app/` changes. It runs the tests
-  and builds an OCI image from `app/Containerfile` with
-  [Buildah](https://buildah.io/) (no Docker involved). On `main` it also
-  pushes the image to GitHub Container Registry (ghcr.io). You can also start
-  it by hand from the Actions tab, for example if the image is missing.
+  formatted and valid, runs [TFLint](https://github.com/terraform-linters/tflint)
+  (settings in `.tflint.hcl`) and lets [Trivy](https://trivy.dev/) look for
+  insecure settings. It doesn't log in to Azure or build anything.
+- **App Build** runs whenever something in `app/` changes. It runs the tests,
+  lets Trivy check `Containerfile` and `app/k8s/`, and builds an OCI image
+  from `app/Containerfile` with [Buildah](https://buildah.io/) (no Docker
+  involved). Trivy then scans the image for known vulnerabilities. On `main`
+  it pushes the image to GitHub Container Registry (ghcr.io), but only if the
+  scan found nothing serious. You can also start it by hand from the Actions
+  tab, for example if the image is missing.
+
+Trivy only stops a run for HIGH and CRITICAL findings. A finding that's
+accepted on purpose has a `#trivy:ignore` comment in the code, with the
+reason next to it.
 - **Terraform Infra** is started by hand from the Actions tab. When you pick
   `apply` it:
   1. checks that the app's image exists on ghcr.io and can be downloaded,

@@ -1,8 +1,17 @@
-# Kontrollerar att Terraform-koden är formaterad och giltig vid varje push och PR.
+# Kontrollerar Terraform-koden vid varje push och PR:
+#   - terraform fmt och validate: att koden är formaterad och giltig
+#   - tflint: fel som validate inte ser, till exempel VM-storlekar som inte
+#     finns i Azure (inställningar i .tflint.hcl)
+#   - Trivy: osäkra inställningar, till exempel ett kluster utan RBAC
 #
 # Körs utan backend och utan inloggning mot Azure, så den bygger ingenting och
 # behöver inga secrets. Därför kan den även köras på terraform/bootstrap/, som annars
 # bara körs manuellt.
+#
+# Actions från andra än GitHub och HashiCorp är låsta till en commit (SHA) i
+# stället för en tagg. En tagg kan flyttas av den som äger actionen, vilket
+# hände med Trivys actions i mars 2026 (CVE-2026-33634). Dependabot uppdaterar
+# SHA:n och kommentaren bakom den.
 
 name: Terraform Validate
 
@@ -12,6 +21,13 @@ on:
 
 permissions:
   contents: read
+
+env:
+  # Versionerna av själva verktygen. Dependabot uppdaterar inte dessa, så
+  # höj dem för hand ibland. Trivy v0.69.4–v0.69.6 var skadliga, så kontrollera
+  # Trivys säkerhetsmeddelanden innan du byter version.
+  TFLINT_VERSION: v0.66.0
+  TRIVY_VERSION: v0.76.2
 
 jobs:
   terraform:
@@ -39,3 +55,30 @@ jobs:
 
       - name: Terraform Validate
         run: terraform validate
+
+      - name: Setup TFLint
+        uses: terraform-linters/setup-tflint@6ffdbaa3be476b3431f7275c26966ef32ff60337 # v6.3.2
+        with:
+          tflint_version: ${{ env.TFLINT_VERSION }}
+
+      # Hämtar pluginet för Azure. Tokenen gör att GitHub inte begränsar
+      # nedladdningen (anonyma anrop har en låg gräns).
+      - name: TFLint Init
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: tflint --init --config "$GITHUB_WORKSPACE/.tflint.hcl"
+
+      - name: TFLint
+        run: tflint --config "$GITHUB_WORKSPACE/.tflint.hcl" --format compact
+
+      # Bara HIGH och CRITICAL stoppar pipelinen. Lägre nivåer är mest sådant
+      # som kostar pengar (kundhanterade nycklar, geo-replikering) och inte
+      # behövs i ett labb. Undantag står som #trivy:ignore i koden, med skälet.
+      - name: Trivy Config Scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: ${{ matrix.dir }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          version: ${{ env.TRIVY_VERSION }}
