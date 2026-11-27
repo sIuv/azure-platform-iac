@@ -100,10 +100,13 @@ jobs:
           --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}"
           .
 
-      # Trivy läser imagen från en fil, eftersom den inte är pushad än och
+      # Trivy läser imagen från disk, eftersom den inte är pushad än och
       # buildah inte har någon Docker-daemon som Trivy kan fråga.
+      # "oci:" sparar imagen som en mapp i OCI-format (med index.json).
+      # Trivy kan läsa en sådan mapp, men inte en OCI-image packad i en
+      # tar-fil ("oci-archive:"), som bara fungerar i Dockers format.
       - name: App Image Export
-        run: buildah push "${{ steps.image.outputs.name }}" "oci-archive:${{ runner.temp }}/hello-app.tar"
+        run: buildah push "${{ steps.image.outputs.name }}" "oci:${{ runner.temp }}/hello-app-oci"
 
       # Letar efter kända sårbarheter i imagen innan den pushas, så att en
       # sårbar image aldrig hamnar på ghcr.io. ignore-unfixed: sårbarheter som
@@ -113,7 +116,7 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
-          input: ${{ runner.temp }}/hello-app.tar
+          input: ${{ runner.temp }}/hello-app-oci
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
